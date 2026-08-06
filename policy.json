@@ -1,0 +1,9 @@
+{
+  "require_adult_confirmation": true,
+  "allow_adult_content": true,
+  "block_minors": true,
+  "block_non_consensual_content": true,
+  "block_illegal_content": true,
+  "custom_blocked_terms": [],
+  "custom_allowed_terms": []
+}

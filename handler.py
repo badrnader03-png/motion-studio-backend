@@ -1,294 +1,387 @@
 import base64
-import glob
 import io
-import json
 import os
+import tempfile
 import traceback
-from pathlib import Path
 from typing import Any
 
 import runpod
+import torch
 from PIL import Image, ImageOps
+from diffusers.pipelines.wan.pipeline_wan_i2v import WanImageToVideoPipeline
+from diffusers.utils.export_utils import export_to_video
 
-MODEL_ID = os.getenv("MODEL_NAME", "Qwen/Qwen-Image-Edit-2511")
-POSE_MODEL_ID = os.getenv("POSE_MODEL_NAME", "lllyasviel/Annotators")
-CACHE_ROOT = os.getenv("HF_HUB_CACHE", "/runpod-volume/huggingface-cache/hub")
-MAX_INPUT_SIDE = int(os.getenv("MAX_INPUT_SIDE", "1024"))
-POLICY_PATH = Path(os.getenv("POLICY_PATH", "/app/policy.json"))
+
+MODEL_ID = os.getenv(
+    "MODEL_NAME",
+    "TestOrganizationPleaseIgnore/WAMU_v3_WAN2.2_I2V_LIGHTNING"
+)
+
+MAX_DIM = 832
+MIN_DIM = 480
+SQUARE_DIM = 640
+MULTIPLE_OF = 16
+
+FIXED_FPS = 16
+MIN_FRAMES = 8
+MAX_FRAMES = 160
+
+DEFAULT_NEGATIVE_PROMPT = (
+    "色调艳丽, 过曝, 静态, 细节模糊不清, 字幕, 风格, 作品, 画作, "
+    "画面, 静止, 整体发灰, 最差质量, 低质量, JPEG压缩残留, 丑陋的, "
+    "残缺的, 多余的手指, 画得不好的手部, 画得不好的脸部, 畸形的, "
+    "毁容的, 形态畸形的肢体, 手指融合, 静止不动的画面, 杂乱的背景, "
+    "三条腿, 背景人很多, 倒着走"
+)
 
 _PIPELINE = None
-_POSE_DETECTOR = None
-
-
-def load_policy() -> dict[str, Any]:
-    if not POLICY_PATH.exists():
-        return {}
-    return json.loads(POLICY_PATH.read_text(encoding="utf-8"))
-
-
-def check_policy(job_input: dict[str, Any]) -> None:
-    policy = load_policy()
-
-    if policy.get("require_adult_confirmation", False):
-        if not bool(job_input.get("adult_confirmed", False)):
-            raise ValueError("adult_confirmed is required.")
-
-    prompt = " ".join(str(job_input.get("prompt", "")).lower().split())
-    for term in policy.get("custom_blocked_terms", []):
-        if " ".join(str(term).lower().split()) in prompt:
-            raise ValueError("Request blocked by custom policy.")
-
-
-def resolve_cached_model(model_id: str) -> str:
-    if "/" not in model_id:
-        return model_id
-
-    org, name = model_id.split("/", 1)
-    root = os.path.join(CACHE_ROOT, f"models--{org}--{name}")
-    refs_main = os.path.join(root, "refs", "main")
-    snapshots = os.path.join(root, "snapshots")
-
-    if os.path.isfile(refs_main):
-        revision = Path(refs_main).read_text(encoding="utf-8").strip()
-        candidate = os.path.join(snapshots, revision)
-        if os.path.isdir(candidate):
-            print(f"[cache] Using snapshot: {candidate}", flush=True)
-            return candidate
-
-    candidates = sorted(
-        glob.glob(os.path.join(snapshots, "*")),
-        key=os.path.getmtime,
-        reverse=True,
-    )
-    for candidate in candidates:
-        if os.path.isdir(candidate):
-            print(f"[cache] Using snapshot fallback: {candidate}", flush=True)
-            return candidate
-
-    return model_id
-
-
-def get_pipeline():
-    global _PIPELINE
-    if _PIPELINE is not None:
-        return _PIPELINE
-
-    import torch
-    from diffusers import QwenImageEditPlusPipeline
-
-    model_path = resolve_cached_model(MODEL_ID)
-    local_only = os.path.isdir(model_path)
-    token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
-
-    print(f"[model] Loading Qwen pipeline from: {model_path}", flush=True)
-
-    pipe = QwenImageEditPlusPipeline.from_pretrained(
-        model_path,
-        torch_dtype=torch.bfloat16,
-        local_files_only=local_only,
-        token=token if not local_only else None,
-        low_cpu_mem_usage=True,
-    )
-    pipe.enable_model_cpu_offload()
-
-    if getattr(pipe, "vae", None) is not None:
-        pipe.vae.enable_slicing()
-        pipe.vae.enable_tiling()
-
-    pipe.set_progress_bar_config(disable=True)
-    _PIPELINE = pipe
-
-    print("[model] Qwen pipeline ready", flush=True)
-    return _PIPELINE
-
-
-def get_pose_detector():
-    global _POSE_DETECTOR
-    if _POSE_DETECTOR is not None:
-        return _POSE_DETECTOR
-
-    from controlnet_aux import OpenposeDetector
-
-    token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
-    print(f"[pose] Loading OpenPose annotator: {POSE_MODEL_ID}", flush=True)
-
-    _POSE_DETECTOR = OpenposeDetector.from_pretrained(
-        POSE_MODEL_ID,
-        cache_dir=CACHE_ROOT,
-        token=token,
-    )
-
-    print("[pose] OpenPose annotator ready", flush=True)
-    return _POSE_DETECTOR
 
 
 def decode_image(value: str) -> Image.Image:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError("Image must be a non-empty base64 string or data URL.")
+        raise ValueError("image must be a base64 string or data URL")
 
-    encoded = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
-    raw = base64.b64decode(encoded, validate=False)
-    image = ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB")
+    if value.startswith("data:") and "," in value:
+        value = value.split(",", 1)[1]
 
-    if max(image.size) > MAX_INPUT_SIDE:
-        image.thumbnail((MAX_INPUT_SIDE, MAX_INPUT_SIDE), Image.Resampling.LANCZOS)
+    raw = base64.b64decode(value, validate=False)
 
-    width = max(64, image.width - image.width % 16)
-    height = max(64, image.height - image.height % 16)
-
-    if image.size != (width, height):
-        image = image.resize((width, height), Image.Resampling.LANCZOS)
+    image = Image.open(io.BytesIO(raw))
+    image = ImageOps.exif_transpose(image)
+    image = image.convert("RGB")
 
     return image
 
 
-def encode_image(image: Image.Image) -> str:
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+def resize_image(image: Image.Image) -> Image.Image:
+    width, height = image.size
 
+    if width == height:
+        return image.resize(
+            (SQUARE_DIM, SQUARE_DIM),
+            Image.Resampling.LANCZOS
+        )
 
-def reference_dimensions(reference: Image.Image) -> tuple[int, int]:
-    width, height = reference.size
-    scale = min(1.0, 1024 / max(width, height))
-    width = max(512, int(width * scale))
-    height = max(512, int(height * scale))
-    width = max(512, width - width % 16)
-    height = max(512, height - height % 16)
-    return width, height
+    aspect_ratio = width / height
 
+    max_aspect_ratio = MAX_DIM / MIN_DIM
+    min_aspect_ratio = MIN_DIM / MAX_DIM
 
-def build_pose_map(reference: Image.Image) -> Image.Image:
-    detector = get_pose_detector()
+    image_to_resize = image
 
-    print("[pose] Extracting body, hand and face pose from Image 2", flush=True)
-    pose_map = detector(
-        reference,
-        include_body=True,
-        include_hand=True,
-        include_face=True,
-        hand_and_face=True,
+    if aspect_ratio > max_aspect_ratio:
+        target_w = MAX_DIM
+        target_h = MIN_DIM
+
+        crop_width = int(round(height * max_aspect_ratio))
+        left = (width - crop_width) // 2
+
+        image_to_resize = image.crop(
+            (left, 0, left + crop_width, height)
+        )
+
+    elif aspect_ratio < min_aspect_ratio:
+        target_w = MIN_DIM
+        target_h = MAX_DIM
+
+        crop_height = int(round(width / min_aspect_ratio))
+        top = (height - crop_height) // 2
+
+        image_to_resize = image.crop(
+            (0, top, width, top + crop_height)
+        )
+
+    else:
+        if width > height:
+            target_w = MAX_DIM
+            target_h = int(round(target_w / aspect_ratio))
+        else:
+            target_h = MAX_DIM
+            target_w = int(round(target_h * aspect_ratio))
+
+    final_w = round(target_w / MULTIPLE_OF) * MULTIPLE_OF
+    final_h = round(target_h / MULTIPLE_OF) * MULTIPLE_OF
+
+    final_w = max(MIN_DIM, min(MAX_DIM, final_w))
+    final_h = max(MIN_DIM, min(MAX_DIM, final_h))
+
+    return image_to_resize.resize(
+        (final_w, final_h),
+        Image.Resampling.LANCZOS
     )
 
-    if not isinstance(pose_map, Image.Image):
-        pose_map = Image.fromarray(pose_map)
 
-    return pose_map.convert("RGB").resize(reference.size, Image.Resampling.NEAREST)
+def resize_last_image(
+    image: Image.Image,
+    reference: Image.Image
+) -> Image.Image:
+
+    ref_width, ref_height = reference.size
+    width, height = image.size
+
+    scale = max(
+        ref_width / width,
+        ref_height / height
+    )
+
+    new_width = int(width * scale)
+    new_height = int(height * scale)
+
+    image = image.resize(
+        (new_width, new_height),
+        Image.Resampling.LANCZOS
+    )
+
+    left = (new_width - ref_width) // 2
+    top = (new_height - ref_height) // 2
+
+    return image.crop(
+        (
+            left,
+            top,
+            left + ref_width,
+            top + ref_height
+        )
+    )
+
+
+def get_num_frames(duration: float) -> int:
+    frames = int(round(duration * FIXED_FPS))
+
+    frames = max(
+        MIN_FRAMES,
+        min(MAX_FRAMES, frames)
+    )
+
+    return frames + 1
+
+
+def get_pipeline():
+    global _PIPELINE
+
+    if _PIPELINE is not None:
+        return _PIPELINE
+
+    print(
+        f"[model] Loading Wan 2.2 pipeline: {MODEL_ID}",
+        flush=True
+    )
+
+    token = (
+        os.getenv("HF_TOKEN")
+        or os.getenv("HUGGING_FACE_HUB_TOKEN")
+    )
+
+    pipe = WanImageToVideoPipeline.from_pretrained(
+        MODEL_ID,
+        torch_dtype=torch.bfloat16,
+        token=token,
+        low_cpu_mem_usage=True,
+    )
+
+    # RunPod version:
+    # Unlike the original ZeroGPU Space, we do not use spaces.aoti_load().
+    # CPU offload helps reduce VRAM requirements.
+    pipe.enable_model_cpu_offload()
+
+    if getattr(pipe, "vae", None) is not None:
+        try:
+            pipe.vae.enable_slicing()
+        except Exception:
+            pass
+
+        try:
+            pipe.vae.enable_tiling()
+        except Exception:
+            pass
+
+    pipe.set_progress_bar_config(disable=False)
+
+    _PIPELINE = pipe
+
+    print("[model] Wan 2.2 ready", flush=True)
+
+    return _PIPELINE
+
+
+def encode_video(path: str) -> str:
+    with open(path, "rb") as f:
+        return base64.b64encode(
+            f.read()
+        ).decode("utf-8")
 
 
 def handler(job: dict[str, Any]) -> dict[str, Any]:
+    video_path = None
+
     try:
-        import torch
+
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA GPU is required for Wan 2.2."
+            )
 
         job_input = job.get("input") or {}
-        check_policy(job_input)
 
-        user_prompt = str(job_input.get("prompt", "")).strip()
-        if len(user_prompt) < 3:
-            raise ValueError("prompt is required.")
-
-        if not job_input.get("base_image"):
-            raise ValueError("base_image is required.")
-        if not job_input.get("reference_image"):
-            raise ValueError("reference_image is required.")
-
-        image_1 = decode_image(job_input["base_image"])
-        image_2 = decode_image(job_input["reference_image"])
-        pose_map = build_pose_map(image_2)
-
-        seed = int(job_input.get("seed", 42))
-        steps = max(25, min(int(job_input.get("steps", 40)), 60))
-        true_cfg_scale = max(
-            3.0,
-            min(float(job_input.get("true_cfg_scale", 4.5)), 6.5),
+        image_value = (
+            job_input.get("image")
+            or job_input.get("input_image")
         )
 
-        # Approximate controls: Qwen has no true per-reference weights.
-        pose_strength = max(0.0, min(float(job_input.get("pose_strength", 0.95)), 1.0))
-        composition_strength = max(0.0, min(float(job_input.get("composition_strength", 0.95)), 1.0))
-        identity_strength = max(0.0, min(float(job_input.get("identity_strength", 0.90)), 1.0))
-        body_strength = max(0.0, min(float(job_input.get("body_strength", 0.90)), 1.0))
+        if not image_value:
+            raise ValueError("image is required")
 
-        width, height = reference_dimensions(image_2)
+        prompt = str(
+            job_input.get(
+                "prompt",
+                "make this image come alive, cinematic motion, smooth animation"
+            )
+        ).strip()
 
-        identity_word = "strictly" if identity_strength >= 0.85 else "carefully" if identity_strength >= 0.60 else "generally"
-        body_word = "strictly" if body_strength >= 0.85 else "carefully" if body_strength >= 0.60 else "generally"
-        pose_word = "follow exactly" if pose_strength >= 0.90 else "follow closely" if pose_strength >= 0.65 else "use as a loose guide"
-        comp_word = "preserve exactly" if composition_strength >= 0.90 else "preserve closely" if composition_strength >= 0.65 else "use as a loose guide"
+        if not prompt:
+            raise ValueError("prompt is required")
 
-        prompt = (
-            "Perform a precise three-reference image edit. "
-            f"Reference Image 1 contains the only person identity that may appear in the result. "
-            f"{identity_word.capitalize()} preserve that adult person's exact face, facial geometry, hair identity, "
-            f"skin tone and all recognizable identity details from Reference Image 1. "
-            f"{body_word.capitalize()} preserve body volume, silhouette, limb thickness, torso proportions, waist, hips, chest "
-            f"and height appearance from Reference Image 1. "
-            f"Reference Image 2 defines the target outfit, scene, camera position, framing, perspective and lighting. "
-            f"{comp_word.capitalize()} the crop, camera angle, depth and foreground/background placement from Reference Image 2. "
-            f"Reference Image 3 is an OpenPose skeleton extracted from Reference Image 2. "
-            f"{pose_word.capitalize()} Reference Image 3 for the location and bending of the head, torso, shoulders, "
-            f"elbows, wrists, hips, knees, ankles and hands. "
-            "Recreate the composition of Reference Image 2, replacing its person with the exact person "
-            "from Reference Image 1. Produce one photorealistic photograph, not a collage. "
-            "Never copy the face or body identity from Reference Image 2. Never average or merge identities. "
-            f"Additional user instruction: {user_prompt}"
+        negative_prompt = str(
+            job_input.get(
+                "negative_prompt",
+                DEFAULT_NEGATIVE_PROMPT
+            )
         )
 
-        negative_prompt = (
-            "anime, cartoon, illustration, painting, drawing, 3d render, collage, split screen, "
-            "two people, duplicate person, face blend, identity mix, different person, different face, "
-            "changed body volume, changed body shape, changed proportions, slimmed body, enlarged body, "
-            "wrong pose, standing pose when target is sitting, missing limbs, extra limbs, extra fingers, "
-            "deformed anatomy, blurry, low quality"
+        duration = float(
+            job_input.get("duration", 3.5)
+        )
+
+        duration = max(
+            0.5,
+            min(10.0, duration)
+        )
+
+        steps = int(
+            job_input.get("steps", 4)
+        )
+
+        steps = max(
+            1,
+            min(30, steps)
+        )
+
+        guidance_scale = float(
+            job_input.get(
+                "guidance_scale",
+                1.0
+            )
+        )
+
+        guidance_scale_2 = float(
+            job_input.get(
+                "guidance_scale_2",
+                1.0
+            )
+        )
+
+        seed = int(
+            job_input.get("seed", 42)
+        )
+
+        fps = FIXED_FPS
+
+        image = decode_image(image_value)
+        image = resize_image(image)
+
+        last_image = None
+
+        if job_input.get("last_image"):
+            last_image = decode_image(
+                job_input["last_image"]
+            )
+
+            last_image = resize_last_image(
+                last_image,
+                image
+            )
+
+        num_frames = get_num_frames(
+            duration
         )
 
         print(
-            f"[job] Qwen 3-reference generation {width}x{height}; "
-            f"steps={steps}; true_cfg={true_cfg_scale}; seed={seed}",
-            flush=True,
+            "[job] "
+            f"{image.width}x{image.height} "
+            f"frames={num_frames} "
+            f"fps={fps} "
+            f"steps={steps} "
+            f"seed={seed}",
+            flush=True
         )
 
         pipe = get_pipeline()
-        generator = torch.Generator(device="cpu").manual_seed(seed)
+
+        generator = torch.Generator(
+            device="cpu"
+        ).manual_seed(seed)
+
+        kwargs = {
+            "image": image,
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "height": image.height,
+            "width": image.width,
+            "num_frames": num_frames,
+            "guidance_scale": guidance_scale,
+            "guidance_scale_2": guidance_scale_2,
+            "num_inference_steps": steps,
+            "generator": generator,
+            "output_type": "np",
+        }
+
+        if last_image is not None:
+            kwargs["last_image"] = last_image
 
         with torch.inference_mode():
-            result = pipe(
-                image=[image_1, image_2, pose_map],
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                true_cfg_scale=true_cfg_scale,
-                width=width,
-                height=height,
-                num_inference_steps=steps,
-                generator=generator,
-                num_images_per_prompt=1,
-            ).images[0]
+            result = pipe(**kwargs)
 
-        print("[job] Generation complete", flush=True)
+        frames = result.frames[0]
 
-        output = {
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".mp4",
+            delete=False
+        )
+
+        video_path = tmp.name
+        tmp.close()
+
+        export_to_video(
+            frames,
+            video_path,
+            fps=fps,
+            quality=int(
+                job_input.get("quality", 6)
+            )
+        )
+
+        video_base64 = encode_video(
+            video_path
+        )
+
+        return {
             "ok": True,
-            "image_base64": encode_image(result),
-            "mime_type": "image/png",
+            "video_base64": video_base64,
+            "mime_type": "video/mp4",
             "model": MODEL_ID,
             "seed": seed,
             "steps": steps,
-            "true_cfg_scale": true_cfg_scale,
-            "width": width,
-            "height": height,
-            "pose_strength": pose_strength,
-            "composition_strength": composition_strength,
-            "identity_strength": identity_strength,
-            "body_strength": body_strength,
+            "duration": duration,
+            "fps": fps,
+            "num_frames": num_frames,
+            "width": image.width,
+            "height": image.height,
         }
 
-        if bool(job_input.get("return_pose_map", False)):
-            output["pose_map_base64"] = encode_image(pose_map)
-
-        return output
-
     except Exception as error:
+
         traceback.print_exc()
+
         return {
             "ok": False,
             "error": str(error),
@@ -296,7 +389,24 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
             "model": MODEL_ID,
         }
 
+    finally:
+
+        if video_path and os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+            except Exception:
+                pass
+
 
 if __name__ == "__main__":
-    print("[worker] Starting Motion Studio Qwen Pose v3", flush=True)
-    runpod.serverless.start({"handler": handler})
+
+    print(
+        "[worker] Starting Motion Studio Wan 2.2 I2V",
+        flush=True
+    )
+
+    runpod.serverless.start(
+        {
+            "handler": handler
+        }
+    )

@@ -145,15 +145,22 @@ def resize_last_image(
     )
 
 
-def get_num_frames(duration: float) -> int:
-    frames = int(round(duration * FIXED_FPS))
+def normalize_num_frames(value: int) -> int:
+    """
+    Wan video lengths are safest as 4k+1 frames because of temporal VAE compression.
+    Clamp to the supported range and snap to the nearest valid 4k+1 value.
+    """
+    value = max(MIN_FRAMES + 1, min(MAX_FRAMES + 1, int(value)))
+    k = round((value - 1) / 4)
+    return max(MIN_FRAMES + 1, min(MAX_FRAMES + 1, 4 * k + 1))
 
-    frames = max(
-        MIN_FRAMES,
-        min(MAX_FRAMES, frames)
-    )
 
-    return frames + 1
+def get_num_frames(duration: float, requested_frames: int | None = None) -> int:
+    if requested_frames is not None:
+        return normalize_num_frames(requested_frames)
+
+    frames = int(round(duration * FIXED_FPS)) + 1
+    return normalize_num_frames(frames)
 
 
 def get_pipeline():
@@ -301,9 +308,19 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
                 image
             )
 
+        requested_frames = job_input.get("num_frames")
+        if requested_frames in ("", None):
+            requested_frames = None
+        else:
+            requested_frames = int(requested_frames)
+
         num_frames = get_num_frames(
-            duration
+            duration,
+            requested_frames=requested_frames
         )
+
+        # Report the real generated duration when frames are manually selected.
+        actual_duration = (num_frames - 1) / fps
 
         print(
             "[job] "
@@ -371,7 +388,8 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
             "model": MODEL_ID,
             "seed": seed,
             "steps": steps,
-            "duration": duration,
+            "duration": actual_duration,
+            "requested_duration": duration,
             "fps": fps,
             "num_frames": num_frames,
             "width": image.width,

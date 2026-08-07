@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
+  <title>Motion Studio AI — Wan 2.2 I2V</title>
+  <style>
+    :root{
+      --bg:#080c18;--panel:#11182a;--text:#f8fafc;--muted:#9ca3af;
+      --accent:#7c3aed;--accent2:#ec4899;--border:#26334f;--danger:#ef4444;
+      --ok:#22c55e
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;min-height:100vh;color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif;
+      background:
+        radial-gradient(circle at top right,rgba(124,58,237,.25),transparent 30%),
+        radial-gradient(circle at top left,rgba(236,72,153,.16),transparent 28%),
+        linear-gradient(180deg,#070b15,#10182b)
+    }
+    .app{max-width:900px;margin:auto;padding:18px 14px 70px}
+    .brand{display:flex;align-items:center;gap:11px;margin-bottom:18px}
+    .logo{width:48px;height:48px;border-radius:15px;display:grid;place-items:center;
+      background:linear-gradient(135deg,var(--accent),var(--accent2));font-size:24px}
+    h1{margin:0;font-size:23px}.brand p{margin:4px 0 0;color:var(--muted);font-size:12px}
+    .hero,.card{background:rgba(17,24,42,.94);border:1px solid var(--border);border-radius:19px}
+    .hero{padding:19px;margin-bottom:14px;background:linear-gradient(135deg,rgba(124,58,237,.22),rgba(236,72,153,.13))}
+    .hero h2{margin:0 0 7px;font-size:23px}.hero p{margin:0;color:#d1d5db;line-height:1.7;font-size:14px}
+    .card{padding:15px;margin-bottom:14px}.card h3{margin:0 0 4px;font-size:16px}
+    .sub{color:var(--muted);font-size:12px;margin-bottom:12px;line-height:1.5}
+    .upload{min-height:300px;border:1px dashed #50638c;border-radius:15px;background:#0d1425;
+      display:flex;align-items:center;justify-content:center;text-align:center;padding:14px;cursor:pointer;overflow:hidden}
+    .upload input{display:none}.placeholder .icon{font-size:40px;margin-bottom:9px}
+    .placeholder strong{display:block;font-size:15px}.placeholder small{display:block;color:var(--muted);margin-top:5px}
+    .preview{display:none;max-width:100%;max-height:460px;border-radius:12px}
+    textarea,input[type=password],input[type=text],input[type=number]{
+      width:100%;background:#0d1425;color:white;border:1px solid var(--border);
+      border-radius:12px;padding:12px;font-family:inherit;font-size:14px
+    }
+    textarea{min-height:155px;resize:vertical;line-height:1.7}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .row.three{grid-template-columns:1fr 1fr 1fr}
+    .label{font-size:12px;color:var(--muted);margin-bottom:6px}
+    .btn{width:100%;padding:15px;border:0;border-radius:14px;color:white;font-size:16px;font-weight:800;
+      background:linear-gradient(135deg,var(--accent),var(--accent2));cursor:pointer}
+    .btn.secondary{background:#1a2540;border:1px solid var(--border);font-size:13px;padding:11px;margin-top:10px}
+    .btn:disabled{opacity:.4;cursor:not-allowed}
+    .status{display:none;margin-top:12px;padding:13px;border-radius:12px;background:#0d1425;
+      border:1px solid var(--border);font-size:13px;line-height:1.7;white-space:pre-wrap}
+    .result{display:none}
+    .result video{width:100%;border-radius:14px;display:block;background:#000}
+    .download{display:block;text-align:center;margin-top:10px;padding:12px;border-radius:12px;
+      background:#18233c;color:white;text-decoration:none;font-weight:700}
+    .hint{font-size:11px;color:var(--muted);margin-top:7px;line-height:1.6}
+    select{
+      width:100%;background:#0d1425;color:white;border:1px solid var(--border);
+      border-radius:12px;padding:12px;font-family:inherit;font-size:14px
+    }
+    @media(max-width:700px){.row,.row.three{grid-template-columns:1fr}.hero h2{font-size:21px}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="brand">
+    <div class="logo">▶</div>
+    <div>
+      <h1>Motion Studio AI</h1>
+      <p>Wan 2.2 — صورة + برومبت → فيديو</p>
+    </div>
+  </div>
+
+  <section class="hero">
+    <h2>حرّك صورة واحدة باستخدام Wan 2.2</h2>
+    <p>ارفع الصورة، اكتب وصف الحركة التي تريدها، ثم اضغط Generate Video. النتيجة ترجع من RunPod كفيديو MP4.</p>
+  </section>
+
+  <section class="card">
+    <h3>إعداد الاتصال بـ RunPod</h3>
+    <div class="sub">يتم حفظ البيانات داخل المتصفح على هذا الجهاز.</div>
+
+    <div class="row">
+      <div>
+        <div class="label">Endpoint ID</div>
+        <input id="endpointId" type="text" value="4y8knkdb35oljh" placeholder="Endpoint ID">
+      </div>
+      <div>
+        <div class="label">RunPod API Key</div>
+        <input id="apiKey" type="password" placeholder="rpa_...">
+      </div>
+    </div>
+
+    <button id="saveConnection" class="btn secondary" type="button">حفظ بيانات الاتصال</button>
+  </section>
+
+  <section class="card">
+    <h3>الصورة</h3>
+    <div class="sub">ارفع صورة JPG أو PNG أو WEBP.</div>
+
+    <label class="upload" for="inputImage">
+      <input id="inputImage" type="file" accept="image/*">
+      <div id="imagePlaceholder" class="placeholder">
+        <div class="icon">🖼️</div>
+        <strong>اختيار الصورة</strong>
+        <small>اضغط هنا لرفع الصورة</small>
+      </div>
+      <img id="imagePreview" class="preview" alt="معاينة الصورة">
+    </label>
+  </section>
+
+  <section class="card">
+    <h3>برومبت الحركة</h3>
+    <div class="sub">اكتب الحركة، تعبيرات الوجه، حركة الجسم أو حركة الكاميرا التي تريدها.</div>
+
+    <textarea id="prompt" placeholder="مثال: The person looks directly at the camera while talking naturally, with subtle facial expressions and realistic body motion. Static camera, preserve face, hair, clothing and background."></textarea>
+
+    <div class="row three">
+      <div>
+        <div class="label">التحكم في الطول</div>
+        <select id="lengthMode">
+          <option value="duration">بالمدة</option>
+          <option value="frames">بالفريمات</option>
+        </select>
+      </div>
+      <div id="durationWrap">
+        <div class="label">مدة الفيديو بالثواني</div>
+        <input id="duration" type="number" min="0.5" max="10" step="0.5" value="3.5">
+      </div>
+      <div id="framesWrap" style="display:none">
+        <div class="label">عدد الفريمات</div>
+        <select id="framePreset">
+          <option value="49">49 فريم ≈ 3 ثواني</option>
+          <option value="65">65 فريم ≈ 4 ثواني</option>
+          <option value="81" selected>81 فريم ≈ 5 ثواني</option>
+          <option value="97">97 فريم ≈ 6 ثواني</option>
+          <option value="113">113 فريم ≈ 7 ثواني</option>
+          <option value="129">129 فريم ≈ 8 ثواني</option>
+          <option value="145">145 فريم ≈ 9 ثواني</option>
+          <option value="161">161 فريم ≈ 10 ثواني</option>
+          <option value="custom">Custom</option>
+        </select>
+        <input id="customFrames" type="number" min="9" max="161" step="4" value="81"
+               style="display:none;margin-top:8px" placeholder="مثال: 81">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <div class="label">Steps</div>
+        <input id="steps" type="number" min="1" max="30" value="4">
+      </div>
+      <div>
+        <div class="label">Seed</div>
+        <input id="seed" type="number" min="0" value="42">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <div class="label">Guidance Scale</div>
+        <input id="guidanceScale" type="number" min="0" max="20" step="0.1" value="1">
+      </div>
+      <div>
+        <div class="label">Guidance Scale 2</div>
+        <input id="guidanceScale2" type="number" min="0" max="20" step="0.1" value="1">
+      </div>
+    </div>
+
+    <div class="hint">لو اخترت الفريمات يدويًا، المحرك يضبط العدد تلقائيًا لأقرب قيمة مناسبة لـWan بصيغة 4k+1 (مثل 49، 65، 81، 97...). عند 16 FPS: 81 فريم ≈ 5 ثواني.</div>
+  </section>
+
+  <button id="generate" class="btn" disabled>Generate Video</button>
+  <div id="status" class="status"></div>
+
+  <section id="resultCard" class="card result">
+    <h3>الفيديو الناتج</h3>
+    <video id="resultVideo" controls playsinline></video>
+    <a id="downloadResult" class="download" download="motion-studio-wan22.mp4">حفظ الفيديو MP4</a>
+  </section>
+</div>
+
+<script>
+const endpointIdInput = document.getElementById("endpointId");
+const apiKeyInput = document.getElementById("apiKey");
+const imageInput = document.getElementById("inputImage");
+const promptInput = document.getElementById("prompt");
+const lengthMode = document.getElementById("lengthMode");
+const durationWrap = document.getElementById("durationWrap");
+const framesWrap = document.getElementById("framesWrap");
+const framePreset = document.getElementById("framePreset");
+const customFrames = document.getElementById("customFrames");
+const generateButton = document.getElementById("generate");
+const statusBox = document.getElementById("status");
+const resultCard = document.getElementById("resultCard");
+const resultVideo = document.getElementById("resultVideo");
+const downloadResult = document.getElementById("downloadResult");
+
+const DEFAULT_ENDPOINT = "4y8knkdb35oljh";
+
+const savedEndpoint = localStorage.getItem("runpodEndpointId");
+if (!savedEndpoint) {
+  localStorage.setItem("runpodEndpointId", DEFAULT_ENDPOINT);
+}
+
+endpointIdInput.value = localStorage.getItem("runpodEndpointId") || DEFAULT_ENDPOINT;
+apiKeyInput.value = localStorage.getItem("runpodApiKey") || "";
+
+document.getElementById("saveConnection").addEventListener("click", () => {
+  localStorage.setItem("runpodEndpointId", endpointIdInput.value.trim());
+  localStorage.setItem("runpodApiKey", apiKeyInput.value.trim());
+  showStatus("تم حفظ بيانات الاتصال على هذا الجهاز.");
+  updateButton();
+});
+
+function syncLengthMode(){
+  const usingFrames = lengthMode.value === "frames";
+  durationWrap.style.display = usingFrames ? "none" : "block";
+  framesWrap.style.display = usingFrames ? "block" : "none";
+}
+
+lengthMode.addEventListener("change", syncLengthMode);
+
+framePreset.addEventListener("change", () => {
+  customFrames.style.display = framePreset.value === "custom" ? "block" : "none";
+});
+
+syncLengthMode();
+
+imageInput.addEventListener("change", () => {
+  const file = imageInput.files[0];
+  if (!file) return;
+
+  const preview = document.getElementById("imagePreview");
+  preview.src = URL.createObjectURL(file);
+  preview.style.display = "block";
+  document.getElementById("imagePlaceholder").style.display = "none";
+  updateButton();
+});
+
+function showStatus(message, isError=false){
+  statusBox.style.display = "block";
+  statusBox.textContent = message;
+  statusBox.style.borderColor = isError ? "var(--danger)" : "var(--border)";
+}
+
+function updateButton(){
+  const ready =
+    endpointIdInput.value.trim().length > 5 &&
+    apiKeyInput.value.trim().length > 10 &&
+    imageInput.files.length > 0 &&
+    promptInput.value.trim().length >= 3;
+
+  generateButton.disabled = !ready;
+}
+
+[endpointIdInput, apiKeyInput, promptInput].forEach(el => {
+  el.addEventListener("input", updateButton);
+  el.addEventListener("change", updateButton);
+});
+
+function fileToDataUrl(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("تعذر قراءة الصورة."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function callRunPod(endpointId, apiKey, payload){
+  const runUrl = `https://api.runpod.ai/v2/${endpointId}/run`;
+  const headers = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${apiKey}`
+  };
+
+  const runResponse = await fetch(runUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload)
+  });
+
+  const runData = await runResponse.json();
+
+  if(!runResponse.ok){
+    throw new Error(runData?.error || runData?.message || "فشل إرسال الطلب إلى RunPod.");
+  }
+
+  const jobId = runData.id;
+  if(!jobId) throw new Error("RunPod لم يرجع Job ID.");
+
+  showStatus(`تم إرسال الطلب.\nJob ID: ${jobId}\nجاري تشغيل Wan وتحميل الموديل...`);
+
+  const statusUrl = `https://api.runpod.ai/v2/${endpointId}/status/${jobId}`;
+  const started = Date.now();
+  const maxWaitMs = 30 * 60 * 1000;
+
+  while(Date.now() - started < maxWaitMs){
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    const statusResponse = await fetch(statusUrl, {headers});
+    const statusData = await statusResponse.json();
+
+    if(!statusResponse.ok){
+      throw new Error(statusData?.error || "تعذر قراءة حالة الطلب.");
+    }
+
+    const state = statusData.status;
+    showStatus(`حالة الطلب: ${state}\nJob ID: ${jobId}`);
+
+    if(state === "COMPLETED"){
+      return statusData.output;
+    }
+
+    if(["FAILED","CANCELLED","TIMED_OUT"].includes(state)){
+      throw new Error(
+        statusData.error ||
+        statusData.output?.error ||
+        `انتهى الطلب بحالة ${state}.`
+      );
+    }
+  }
+
+  throw new Error("انتهت مهلة الانتظار. افحص الطلب من لوحة RunPod.");
+}
+
+generateButton.addEventListener("click", async () => {
+  generateButton.disabled = true;
+  resultCard.style.display = "none";
+
+  try{
+    const endpointId = endpointIdInput.value.trim();
+    const apiKey = apiKeyInput.value.trim();
+
+    localStorage.setItem("runpodEndpointId", endpointId);
+    localStorage.setItem("runpodApiKey", apiKey);
+
+    showStatus("جاري قراءة الصورة وتجهيز الطلب...");
+
+    const imageDataUrl = await fileToDataUrl(imageInput.files[0]);
+
+    const inputPayload = {
+      image: imageDataUrl,
+      prompt: promptInput.value.trim(),
+      duration: Number(document.getElementById("duration").value || 3.5),
+      steps: Number(document.getElementById("steps").value || 4),
+      guidance_scale: Number(document.getElementById("guidanceScale").value || 1),
+      guidance_scale_2: Number(document.getElementById("guidanceScale2").value || 1),
+      seed: Number(document.getElementById("seed").value || 42)
+    };
+
+    if(lengthMode.value === "frames"){
+      inputPayload.num_frames = Number(
+        framePreset.value === "custom" ? customFrames.value : framePreset.value
+      );
+    }
+
+    const payload = { input: inputPayload };
+
+    const output = await callRunPod(endpointId, apiKey, payload);
+
+    if(!output){
+      throw new Error("الطلب اكتمل لكن RunPod لم يرجع نتيجة.");
+    }
+
+    if(output.ok === false){
+      throw new Error(`${output.error_type || "Error"}: ${output.error || "فشل التوليد"}`);
+    }
+
+    if(!output.video_base64){
+      throw new Error("النتيجة لا تحتوي على video_base64.");
+    }
+
+    const dataUrl = `data:${output.mime_type || "video/mp4"};base64,${output.video_base64}`;
+
+    resultVideo.src = dataUrl;
+    downloadResult.href = dataUrl;
+    resultCard.style.display = "block";
+    showStatus(
+      `تم إنشاء الفيديو بنجاح.\n` +
+      `${output.width || "?"}×${output.height || "?"} — ` +
+      `${output.fps || 16} FPS — ` +
+      `${output.duration || document.getElementById("duration").value}s — ` +
+      `${output.num_frames || "?"} frames`
+    );
+
+    resultCard.scrollIntoView({behavior:"smooth"});
+
+  }catch(error){
+    console.error(error);
+    showStatus("فشل الطلب:\n" + (error?.message || String(error)), true);
+  }finally{
+    updateButton();
+  }
+});
+
+updateButton();
+</script>
+</body>
+</html>

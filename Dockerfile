@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+FROM pytorch/pytorch:2.11.0-cuda13.0-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -6,23 +6,25 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/runpod-volume/huggingface-cache \
     HF_HUB_CACHE=/runpod-volume/huggingface-cache/hub \
     TRANSFORMERS_CACHE=/runpod-volume/huggingface-cache \
-    MODEL_NAME=Qwen/Qwen-Image-Edit-2511 \
-    POSE_MODEL_NAME=lllyasviel/Annotators \
-    POLICY_PATH=/app/policy.json \
-    MAX_INPUT_SIDE=1024
+    MODEL_NAME=TestOrganizationPleaseIgnore/WAMU_v3_WAN2.2_I2V_LIGHTNING \
+    MAX_INPUT_SIDE=832
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    wget \
+    unzip \
+    ffmpeg \
     libgl1 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
 
 COPY handler.py .
-COPY policy.json .
 
 CMD ["python", "-u", "handler.py"]
